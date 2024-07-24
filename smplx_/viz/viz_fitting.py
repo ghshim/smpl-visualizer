@@ -33,7 +33,8 @@ def viz(fitting_list,
         use_face_contour=False,
         plot_joints=True,      
         plotting_module='open3d',
-        xform_path=None):
+        xform_path=None,
+        fps=33):
     
     # load transformation matrix
     if xform_path:
@@ -46,13 +47,14 @@ def viz(fitting_list,
         vertex_colors = np.ones([vertices.shape[0], 4]) * [0.3, 0.3, 0.3, 0.8]
 
     elif plotting_module == 'open3d':
+        # o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Debug)
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         body = o3d.geometry.TriangleMesh()
-        vis.add_geometry(body)
         if plot_joints:
             joints_pcl = o3d.geometry.PointCloud()
             vis.add_geometry(joints_pcl)
+        
 
     elif plotting_module == 'matplotlib':
         fig = plt.figure()
@@ -72,7 +74,7 @@ def viz(fitting_list,
                               num_pca_comps=num_pca_comps)
     
     # visualize smplx model
-    for fitting_file in fitting_list:
+    for i, fitting_file in enumerate(fitting_list):
         print(fitting_file.split('/')[-2]) # Change this code suitable format for printing frame (or data) name
         # open smplx fitting file
         with open(fitting_file, 'rb') as f:
@@ -95,7 +97,7 @@ def viz(fitting_list,
         
         vertices = output.vertices.detach().cpu().numpy().squeeze()
         joints = output.joints.detach().cpu().numpy().squeeze()
-
+        
         # print('Vertices shape =', vertices.shape)
         # print('Joints shape =', joints.shape)
     
@@ -113,6 +115,12 @@ def viz(fitting_list,
                 scene.add(joints_pcl)
             
         elif plotting_module == 'open3d':
+
+        
+            # Open3D follows the conventional coordinate system is x right, y down, z forward, but OpenGL for rendering has different convention. 
+            # Thus, it is needed to convert the sign of y, z.
+            vertices = vertices @ np.diag([1., -1., -1.])
+            
             body.vertices = o3d.utility.Vector3dVector(vertices)
             body.triangles = o3d.utility.Vector3iVector(body_model.faces)
             body.vertex_normals = o3d.utility.Vector3dVector([])
@@ -121,19 +129,26 @@ def viz(fitting_list,
 
             if xform_path:
                 body.transform(trans)
-
-            vis.update_geometry(body)
-
-            geometry = [body]
+            
+            if i == 0:
+                vis.add_geometry(body)
+            else:
+                vis.update_geometry(body)
 
             if plot_joints:
+                joints = joints @ np.diag([1., -1., -1.])
                 joints_pcl.points = o3d.utility.Vector3dVector(joints)
                 joints_pcl.paint_uniform_color([0.7, 0.3, 0.3])
                 vis.update_geometry(joints_pcl)
             
-            o3d.visualization.draw_geometries(geometry)
+            vis.poll_events()
+            vis.update_renderer()
+            time.sleep(1/fps)
+            o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Info)
+            
+            # o3d.visualization.draw_geometries(geometry)
             # while True:
-            #     cv2.imshow('frame', np.zeros((224,224,3)))
+            #     cv2.imshow('frame', np.zeros((224,224,3), dtype=np.uint16))
             #     vis.poll_events()
             #     vis.update_renderer()
             #     key = cv2.waitKey(30)
@@ -172,6 +187,12 @@ def main(args):
     # fitting_file_list = sorted([os.path.join(fitting_dir, file) for file in fitting_files])
     # viz(fitting_file_list, model_dir, plotting_module=plotting_module, xform_path=xform_path)
 
+    prox_dir = '/home/gahyeon/Desktop/data/prox'
+    fitting_dir = os.path.join(prox_dir, 'fittings', 'MPH1Library_00034_01', 'results')
+    fitting_files = os.listdir(fitting_dir)
+    fitting_file_list = sorted([os.path.join(fitting_dir, file, '000.pkl') for file in fitting_files])
+    viz(fitting_file_list, model_dir, plotting_module=plotting_module, num_pca_comps=12, xform_path=xform_path, plot_joints=True)
+    
 
 if __name__ == '__main__':
     '''
