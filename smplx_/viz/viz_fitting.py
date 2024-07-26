@@ -8,19 +8,93 @@ import os
 import pickle
 import json
 import time
-import cv2
 
 import numpy as np
 import smplx
 import torch
-import pyrender
-import trimesh
-import open3d as o3d
-from matplotlib import pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from smplx_.utils.constants import JOINT_NAMES, SKELETON, JOINT_HIERARHCY
+
+def viz_motion(motion, corners):
+    poses, translation, forward_direction, global_velocity, rotational_velocity = motion
+    num_frames = len(poses)
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    plt.cla()
+    
+    def update(frame):
+        ax.clear()
+        
+        # Calculate the current translation and forward direction based on velocities
+        current_translation = translation[frame]
+        
+        # if frame == 0:
+        #     forward_direction = np.array([1, 0, 0])
+        # else:
+        #     # current_translation = translation[frame] #+ global_velocity[frame - 1]
+        #     current_forward_direction = forward_direction[frame - 1]
+        #     # current_forward_direction = rotate_vector(forward_direction[frame - 1], 
+        #     #                                           rotational_velocity[frame - 1], 
+        #     #                                           np.array([0, 1, 0]))  # Assuming Y-axis rotation
+        current_pose = poses[frame,:,:]
+        
+        # if frame < num_frames:
+        #     current_pose = poses[frame,:,:]
+        # else:
+        #     current_pose = poses[-1,:,:]
+        
+        # Translate the current pose to ensure it's attached to the ground
+        # min_x = np.min(gt_current_pose[:, 0])
+        # min_z = np.min(gt_current_pose[:, 2])
+        # ground_translation = np.array([-min_x, 0, -min_z])
+        
+        ax.set_xlim([-2, 2])
+        ax.set_ylim([-2, 2])
+        ax.set_zlim([-2, 2])
+        ax.set_xlabel('X')
+        ax.set_ylabel('Z')
+        ax.set_zlabel('Y')
+        
+        # Update scatter plot
+        # scatter = ax.scatter(current_pose[:, 0], current_pose[:, 1], current_pose[:, 2])
+        
+        # Update the human body position
+        human_body = current_pose + current_translation
+        ax.scatter(human_body[:, 0], human_body[:, 1], human_body[:, 2], c='r')
+        
+        # Draw the forward direction vector
+        # ax.quiver(current_translation[0], current_translation[1], current_translation[2], 
+        #           current_forward_direction[0], current_forward_direction[1], current_forward_direction[2], color='g')
+        
+        # Draw connections between joints (assuming some SKELETON structure, adjust as needed)
+        for joint_start, joint_end in SKELETON:
+            ax.plot([human_body[joint_start, 0], human_body[joint_end, 0]],
+                    [human_body[joint_start, 1], human_body[joint_end, 1]],
+                    [human_body[joint_start, 2], human_body[joint_end, 2]], 'k-')
+        
+        
+        # Plot bounding boxes
+        for i in range(len(corners)):
+            # Define the 12 lines connecting the corners of the bounding box
+            edges = [
+                [corners[i][j] for j in [0, 1, 3, 2, 0]],
+                [corners[i][j] for j in [4, 5, 7, 6, 4]],
+                [corners[i][j] for j in [0, 4]],
+                [corners[i][j] for j in [1, 5]],
+                [corners[i][j] for j in [2, 6]],
+                [corners[i][j] for j in [3, 7]]
+            ]
+            # poly3d = [[bbox_corners[vert] for vert in face] for face in [
+            #     [0, 1, 5, 4], [7, 6, 2, 3], [0, 3, 7, 4], [1, 2, 6, 5], [0, 1, 2, 3], [4, 5, 6, 7]]]
+            # ax.add_collection3d(Poly3DCollection(poly3d, facecolors='cyan', linewidths=1, edgecolors='r', alpha=.25))
+            
+            for edge in edges:
+                ax.plot([point[0] for point in edge], [point[1] for point in edge], [point[2] for point in edge], 'g-')
+        
+    ani = FuncAnimation(fig, update, frames=num_frames, interval=100)
+    
+    return ani
 
 def viz(fitting_list,               
         model_dir,                  # smplx model dir
@@ -43,11 +117,12 @@ def viz(fitting_list,
 
     '''load plotting module'''
     if plotting_module == 'pyrender':
-        '''
-        TODO
-        - implement OffScreen renderer -> test each osmesa, egl 
-        - live renderer (Done)
-        '''
+        import pyrender
+        import trimesh  
+
+        # TODO : implement OffScreen renderer -> test each osmesa, egl in server
+       
+        # live scene viewer
         scene = pyrender.Scene()
         v = pyrender.Viewer(scene,
                         use_raymond_lighting=True,
@@ -56,6 +131,7 @@ def viz(fitting_list,
         
 
     elif plotting_module == 'open3d':
+        import open3d as o3d
         # o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Debug)
         vis = o3d.visualization.Visualizer()
         vis.create_window()
@@ -66,14 +142,34 @@ def viz(fitting_list,
         
 
     elif plotting_module == 'matplotlib':
-        '''
-        TODO
-        - implement animation
-        '''
+        from matplotlib import pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        from matplotlib.animation import FuncAnimation, FFMpegWriter
+        
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        face_color = (1.0, 1.0, 0.9)
-        edge_color = (0, 0, 0)
+        ax.set_xlim([-2, 2]); ax.set_ylim([-2, 2]); ax.set_zlim([-2, 2])
+        ax.set_xlabel('X'); ax.set_ylabel('Z'); ax.set_zlabel('Y')
+        face_color = (1.0, 1.0, 0.9); edge_color = (0, 0, 0)
+
+        def update(mesh, joints, draw_skel=False):
+            ax.clear()
+
+            mesh.set_edgecolor(edge_color)
+            mesh.set_facecolor(face_color)
+            ax.add_collection3d(mesh)
+            ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], c='r')
+            if plot_joints:
+                ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], alpha=0.1)
+            
+            if draw_skel:
+                # Draw connections between joints (assuming some SKELETON structure, adjust as needed)
+                for joint_start, joint_end in SKELETON:
+                    ax.plot([joints[joint_start, 0], joints[joint_end, 0]],
+                            [joints[joint_start, 1], joints[joint_end, 1]],
+                            [joints[joint_start, 2], joints[joint_end, 2]], 'k-')
+        
 
     else:
         raise ValueError('Unknown plotting_module: {}'.format(plotting_module))
@@ -167,10 +263,8 @@ def viz(fitting_list,
             if xform_path:
                 body.transform(trans)
             
-            if i == 0:
-                vis.add_geometry(body)
-            else:
-                vis.update_geometry(body)
+            if i == 0: vis.add_geometry(body)
+            else: vis.update_geometry(body)
 
             if plot_joints:
                 joints = joints @ np.diag([1., -1., -1.])
@@ -185,14 +279,7 @@ def viz(fitting_list,
             
         elif plotting_module == 'matplotlib':
             mesh = Poly3DCollection(vertices[body_model.faces], alpha=0.1)
-            
-            mesh.set_edgecolor(edge_color)
-            mesh.set_facecolor(face_color)
-            ax.add_collection3d(mesh)
-            ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], color='r')
-
-            if plot_joints:
-                ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], alpha=0.1)
+            update(mesh, joints, draw_skel=False)
             plt.show()
     
     if plotting_module == 'trimesh':
@@ -215,6 +302,14 @@ def main(args):
     # fitting_file_list = sorted([os.path.join(fitting_dir, file) for file in fitting_files])
     # viz(fitting_file_list, model_dir, plotting_module=plotting_module, xform_path=xform_path)
 
+    prox_dir = '/home/gahyeon/Desktop/data/prox'
+    fitting_dir = os.path.join(prox_dir, 'fittings', 'MPH1Library_00034_01', 'results')
+    xform_path = os.path.join(prox_dir, 'cam2world', 'MPH1Library.json')
+    fitting_files = os.listdir(fitting_dir)
+    fitting_file_list = sorted([os.path.join(fitting_dir, file, '000.pkl') for file in fitting_files])
+
+    viz(fitting_file_list, model_dir, plotting_module=plotting_module, num_pca_comps=12, xform_path=xform_path, plot_joints=True)
+    
 
 if __name__ == '__main__':
     '''
