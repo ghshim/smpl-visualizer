@@ -222,14 +222,6 @@ def main(args):
     # fitting_file_list = sorted([os.path.join(fitting_dir, file) for file in fitting_files])
     # viz(fitting_file_list, model_dir, plotting_module=plotting_module, xform_path=xform_path)
 
-    prox_dir = '/home/gahyeon/Desktop/data/prox'
-    fitting_dir = os.path.join(prox_dir, 'fittings', 'MPH1Library_00034_01', 'results')
-    xform_path = os.path.join(prox_dir, 'cam2world', 'MPH1Library.json')
-    fitting_files = os.listdir(fitting_dir)
-    fitting_file_list = sorted([os.path.join(fitting_dir, file, '000.pkl') for file in fitting_files])
-
-    viz(fitting_file_list, model_dir, plotting_module=plotting_module, num_pca_comps=12, xform_path=xform_path, plot_joints=True)
-    
 
 if __name__ == '__main__':
     '''
